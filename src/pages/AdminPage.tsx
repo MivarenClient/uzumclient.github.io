@@ -5,14 +5,14 @@ import {
   Calendar, Clock, X, Edit3, RefreshCw, CreditCard, ExternalLink, Key, Zap, Star,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, type Profile, type NewsItem, type MediaApplication, type PaymentRequest } from '@/lib/supabase';
+import { supabase, type Profile, type NewsItem, type MediaApplication, type PaymentRequest, type PromoCode } from '@/lib/supabase';
 import type { Page } from '@/components/Navbar';
 
 type AdminPageProps = {
   onNavigate: (page: Page) => void;
 };
 
-type Tab = 'users' | 'news' | 'media' | 'payments';
+type Tab = 'users' | 'news' | 'media' | 'payments' | 'promo';
 
 export function AdminPage({ onNavigate }: AdminPageProps) {
   const { profile } = useAuth();
@@ -21,6 +21,8 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [mediaApps, setMediaApps] = useState<MediaApplication[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
+  const [promos, setPromos] = useState<PromoCode[]>([]);
+  const [promoForm, setPromoForm] = useState({ code: '', discount: '10', maxUses: '' });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -40,6 +42,8 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     const usersRes = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
     const newsRes = await supabase.from('news').select('*').order('created_at', { ascending: false });
     const mediaRes = await supabase.from('media_applications').select('*').order('created_at', { ascending: false });
+    const promoRes = await supabase.from('promo_codes').select('*').order('created_at', { ascending: false });
+    if (promoRes.data) setPromos(promoRes.data as PromoCode[]);
 
     if (usersRes.data) {
       const profiles = usersRes.data as Profile[];
@@ -91,43 +95,98 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
       expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
     }
 
-    const { error } = await supabase
+    const { data: _upd, error } = await supabase
       .from('profiles')
       .update({ subscription_type: type, subscription_expires_at: expiresAt })
-      .eq('id', userId);
+      .eq('id', userId)
+      .select('id');
 
-    if (!error) {
+    if (!error && _upd && _upd.length > 0) {
       setUsers(users.map(u => u.id === userId ? { ...u, subscription_type: type, subscription_expires_at: expiresAt } : u));
+    } else {
+      alert('Xatolik: obuna berilmadi. ' + (error?.message || 'Qator yangilanmadi (RLS tekshiring).'));
     }
     setActionLoading(null);
   };
 
   const resetHwid = async (userId: string) => {
     setActionLoading(userId);
-    const { error } = await supabase.from('profiles').update({ hwid: null }).eq('id', userId);
-    if (!error) {
+    const { data: _upd, error } = await supabase.from('profiles').update({ hwid: null }).eq('id', userId).select('id');
+    if (!error && _upd && _upd.length > 0) {
       setUsers(users.map(u => u.id === userId ? { ...u, hwid: null } : u));
+    } else {
+      alert('Xatolik: HWID tozalanmadi. ' + (error?.message || ''));
     }
     setActionLoading(null);
   };
 
   const toggleBlock = async (userId: string, currentBlocked: boolean) => {
     setActionLoading(userId);
-    const { error } = await supabase.from('profiles').update({ is_blocked: !currentBlocked }).eq('id', userId);
-    if (!error) {
+    const { data: _upd, error } = await supabase.from('profiles').update({ is_blocked: !currentBlocked }).eq('id', userId).select('id');
+    if (!error && _upd && _upd.length > 0) {
       setUsers(users.map(u => u.id === userId ? { ...u, is_blocked: !currentBlocked } : u));
+    } else {
+      alert('Xatolik: blok holati o\'zgarmadi. ' + (error?.message || ''));
     }
     setActionLoading(null);
   };
 
   const removeSubscription = async (userId: string) => {
     setActionLoading(userId);
-    const { error } = await supabase
+    const { data: _upd, error } = await supabase
       .from('profiles')
       .update({ subscription_type: 'none', subscription_expires_at: null })
-      .eq('id', userId);
-    if (!error) {
+      .eq('id', userId)
+      .select('id');
+    if (!error && _upd && _upd.length > 0) {
       setUsers(users.map(u => u.id === userId ? { ...u, subscription_type: 'none', subscription_expires_at: null } : u));
+    } else {
+      alert('Xatolik: obuna olib tashlanmadi. ' + (error?.message || ''));
+    }
+    setActionLoading(null);
+  };
+
+  const createPromo = async () => {
+    const code = promoForm.code.trim().toUpperCase();
+    const discount = parseInt(promoForm.discount) || 0;
+    if (!code || discount < 1 || discount > 90) {
+      alert('Kod va 1-90 oralig\'ida chegirma kiriting.');
+      return;
+    }
+    setActionLoading('promo');
+    const maxUses = promoForm.maxUses.trim() ? parseInt(promoForm.maxUses) : null;
+    const { data, error } = await supabase
+      .from('promo_codes')
+      .insert({ code, discount_percent: discount, max_uses: maxUses })
+      .select()
+      .single();
+    if (!error && data) {
+      setPromos([data as PromoCode, ...promos]);
+      setPromoForm({ code: '', discount: '10', maxUses: '' });
+    } else {
+      alert('Xatolik: promokod yaratilmadi. ' + (error?.message || ''));
+    }
+    setActionLoading(null);
+  };
+
+  const togglePromo = async (p: PromoCode) => {
+    setActionLoading(p.id);
+    const { error } = await supabase.from('promo_codes').update({ is_active: !p.is_active }).eq('id', p.id);
+    if (!error) {
+      setPromos(promos.map(x => x.id === p.id ? { ...x, is_active: !p.is_active } : x));
+    } else {
+      alert('Xatolik: ' + error.message);
+    }
+    setActionLoading(null);
+  };
+
+  const deletePromo = async (id: string) => {
+    setActionLoading(id);
+    const { error } = await supabase.from('promo_codes').delete().eq('id', id);
+    if (!error) {
+      setPromos(promos.filter(x => x.id !== id));
+    } else {
+      alert('Xatolik: ' + error.message);
     }
     setActionLoading(null);
   };
@@ -190,10 +249,24 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
           expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
         }
 
-        await supabase
+        const { data: _upd, error: subError } = await supabase
           .from('profiles')
           .update({ subscription_type: req.channel_url as Profile['subscription_type'], subscription_expires_at: expiresAt })
-          .eq('id', req.user_id);
+          .eq('id', req.user_id)
+          .select('id');
+        if (subError || !_upd || _upd.length === 0) {
+          alert('Xatolik: obuna berilmadi. ' + (subError?.message || 'Qator yangilanmadi (RLS tekshiring).'));
+          setActionLoading(null);
+          return;
+        }
+
+        if ((req as MediaApplication).promo_code) {
+          const code = ((req as MediaApplication).promo_code as string).toUpperCase();
+          const cur = await supabase.from('promo_codes').select('id, used_count').eq('code', code).maybeSingle();
+          if (cur.data) {
+            await supabase.from('promo_codes').update({ used_count: ((cur.data as { used_count: number }).used_count || 0) + 1 }).eq('id', (cur.data as { id: string }).id);
+          }
+        }
       }
     }
 
@@ -203,6 +276,8 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
       .eq('id', id);
     if (!error) {
       setPaymentRequests(paymentRequests.map(p => p.id === id ? { ...p, status, reviewed_at: new Date().toISOString() } : p));
+    } else {
+      alert('Xatolik: ' + error.message);
     }
     setActionLoading(null);
   };
@@ -229,6 +304,7 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     { id: 'news', label: 'Yangliklar', icon: Newspaper, count: news.length },
     { id: 'media', label: 'Media so\'rovlar', icon: Megaphone, count: mediaApps.filter(a => a.status === 'pending').length },
     { id: 'payments', label: 'To\'lovlar', icon: CreditCard, count: paymentRequests.filter(p => p.status === 'pending').length },
+    { id: 'promo', label: 'Promokodlar', icon: Star, count: promos.filter(p => p.is_active).length },
   ];
 
   return (
@@ -583,6 +659,20 @@ Yangilik qo'shish
                             {new Date(req.created_at).toLocaleDateString('uz-UZ')} {new Date(req.created_at).toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
+                        {((req as MediaApplication).promo_code || (req as MediaApplication).discount_percent) && (
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mt-1">
+                            {(req as MediaApplication).promo_code && (
+                              <span className="px-2 py-0.5 rounded-full bg-secondary-500/10 border border-secondary-500/20 text-secondary-300 font-mono">
+                                {(req as MediaApplication).promo_code}
+                              </span>
+                            )}
+                            {(req as MediaApplication).discount_percent ? (
+                              <span className="text-success-300 font-medium">
+                                -{(req as MediaApplication).discount_percent}% chegirma
+                              </span>
+                            ) : null}
+                          </div>
+                        )}
                         {req.description && req.description.startsWith('data:') && (
                           <div className="mt-2">
                             <p className="text-xs text-gray-500 mb-1">Skrinshot:</p>
@@ -621,6 +711,86 @@ Yangilik qo'shish
                 ))}
                 {paymentRequests.length === 0 && (
                   <div className="glass-card p-8 text-center text-gray-400">To'lov so'rovlar yo'q.</div>
+                )}
+              </div>
+            )}
+
+            {/* PROMO TAB */}
+            {tab === 'promo' && (
+              <div className="space-y-3">
+                <div className="glass-card p-5">
+                  <h3 className="font-semibold text-white mb-4">Yangi promokod</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                    <input
+                      type="text"
+                      value={promoForm.code}
+                      onChange={(e) => setPromoForm({ ...promoForm, code: e.target.value.toUpperCase() })}
+                      placeholder="Kod (masalan: CHEGIRMA10)"
+                      className="glass-input px-4 py-3 text-sm uppercase"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      max={90}
+                      value={promoForm.discount}
+                      onChange={(e) => setPromoForm({ ...promoForm, discount: e.target.value })}
+                      placeholder="Chegirma %"
+                      className="glass-input px-4 py-3 text-sm"
+                    />
+                    <input
+                      type="number"
+                      min={1}
+                      value={promoForm.maxUses}
+                      onChange={(e) => setPromoForm({ ...promoForm, maxUses: e.target.value })}
+                      placeholder="Limit (bo'sh=cheksiz)"
+                      className="glass-input px-4 py-3 text-sm"
+                    />
+                    <button
+                      onClick={createPromo}
+                      disabled={actionLoading === 'promo'}
+                      className="btn-primary text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                    >
+                      {actionLoading === 'promo' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      Yaratish
+                    </button>
+                  </div>
+                </div>
+
+                {promos.map((p) => (
+                  <div key={p.id} className="glass-card p-4 sm:p-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-mono font-semibold text-white">{p.code}</span>
+                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${p.is_active ? 'bg-success-500/10 border border-success-500/20 text-success-300' : 'bg-gray-500/10 border border-gray-500/20 text-gray-400'}`}>
+                            {p.is_active ? 'Faol' : "O'chiq"}
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">
+                          -{p.discount_percent}% chegirma • Ishlatilgan: {p.used_count}{p.max_uses ? `/${p.max_uses}` : ' (cheksiz)'}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => togglePromo(p)}
+                          disabled={actionLoading === p.id}
+                          className="px-3 py-2 rounded-xl glass-card text-xs font-medium text-secondary-300 hover:bg-secondary-500/10 transition-all disabled:opacity-50"
+                        >
+                          {p.is_active ? "O'chirish" : 'Yoqish'}
+                        </button>
+                        <button
+                          onClick={() => deletePromo(p.id)}
+                          disabled={actionLoading === p.id}
+                          className="px-3 py-2 rounded-xl glass-card text-xs font-medium text-error-300 hover:bg-error-500/10 transition-all disabled:opacity-50"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {promos.length === 0 && (
+                  <div className="glass-card p-8 text-center text-gray-400">Promokodlar yo'q.</div>
                 )}
               </div>
             )}

@@ -83,6 +83,10 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
   const [submitted, setSubmitted] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [promoInput, setPromoInput] = useState('');
+  const [promoDiscount, setPromoDiscount] = useState<number | null>(null);
+  const [promoMsg, setPromoMsg] = useState<string | null>(null);
+  const [promoChecking, setPromoChecking] = useState(false);
 
   const handlePurchase = (plan: Plan) => {
     if (!user || !profile) {
@@ -93,6 +97,38 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
     setProofFile(null);
     setSubmitted(false);
     setError(null);
+    setPromoInput('');
+    setPromoDiscount(null);
+    setPromoMsg(null);
+  };
+
+  const planPrice = (plan: Plan) => parseInt(plan.price.replace(/\D/g, '')) || 0;
+  const finalPrice = (plan: Plan) => {
+    const base = planPrice(plan);
+    if (promoDiscount) return Math.round(base * (100 - promoDiscount) / 100);
+    return base;
+  };
+  const formatPrice = (n: number) => n.toLocaleString('uz-UZ');
+
+  const applyPromo = async () => {
+    if (!promoInput.trim()) return;
+    setPromoChecking(true);
+    setPromoMsg(null);
+    const { data, error: rpcError } = await supabase.rpc('validate_promo', { p_code: promoInput.trim() });
+    if (rpcError) {
+      setPromoMsg('Tekshirishda xatolik.');
+      setPromoDiscount(null);
+    } else {
+      const res = data as { ok: boolean; discount_percent?: number; error?: string };
+      if (res?.ok && res.discount_percent) {
+        setPromoDiscount(res.discount_percent);
+        setPromoMsg(`${res.discount_percent}% chegirma qo'llandi!`);
+      } else {
+        setPromoDiscount(null);
+        setPromoMsg(res?.error || 'Promokod noto\'g\'ri.');
+      }
+    }
+    setPromoChecking(false);
   };
 
   const copyCard = () => {
@@ -128,9 +164,11 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
         channel_name: profile?.username || user.email || '',
         channel_url: selectedPlan.id,
         subscriber_count: 0,
-        avg_views: parseInt(selectedPlan.price.replace(/\D/g, '')) || 0,
+        avg_views: finalPrice(selectedPlan),
         description: proofBase64 || 'Chek yuklanmagan',
         status: 'pending',
+        promo_code: promoDiscount ? promoInput.trim() : null,
+        discount_percent: promoDiscount || 0,
       });
 
     if (insertError) {
@@ -149,6 +187,9 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
     setProofFile(null);
     setSubmitted(false);
     setError(null);
+    setPromoInput('');
+    setPromoDiscount(null);
+    setPromoMsg(null);
   };
 
   return (
@@ -262,7 +303,17 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
               /* Payment form */
               <>
                 <h3 className="font-display font-bold text-xl text-white mb-1">To'lov</h3>
-                <p className="text-sm text-gray-400 mb-6">{selectedPlan.name} — {selectedPlan.price} so'm</p>
+                <p className="text-sm text-gray-400 mb-6">
+                  {selectedPlan.name} —{' '}
+                  {promoDiscount ? (
+                    <>
+                      <span className="line-through text-gray-500">{selectedPlan.price}</span>{' '}
+                      <span className="text-success-300 font-semibold">{formatPrice(finalPrice(selectedPlan))} so'm</span>
+                    </>
+                  ) : (
+                    <>{selectedPlan.price} so'm</>
+                  )}
+                </p>
 
                 {/* Card number */}
                 <div className="glass-card p-4 mb-4">
@@ -281,6 +332,34 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
                     </button>
                   </div>
                   <p className="text-xs text-gray-500 mt-1">Karta egasi: {CARD_HOLDER}</p>
+                </div>
+
+                {/* Promo code */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Promokod (chegirma uchun)
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={promoInput}
+                      onChange={(e) => setPromoInput(e.target.value)}
+                      placeholder="PROMO10"
+                      className="glass-input flex-1 px-4 py-3 text-sm uppercase"
+                    />
+                    <button
+                      onClick={applyPromo}
+                      disabled={promoChecking || !promoInput.trim()}
+                      className="btn-secondary px-5 text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    >
+                      {promoChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : "Qo'llash"}
+                    </button>
+                  </div>
+                  {promoMsg && (
+                    <p className={`text-xs mt-2 ${promoDiscount ? 'text-success-300' : 'text-error-300'}`}>
+                      {promoMsg}
+                    </p>
+                  )}
                 </div>
 
                 {/* Proof upload */}

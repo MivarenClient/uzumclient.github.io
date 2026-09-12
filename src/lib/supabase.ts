@@ -45,6 +45,18 @@ export type MediaApplication = {
   plan_type?: string | null;
   amount?: string | null;
   card_number?: string | null;
+  promo_code?: string | null;
+  discount_percent?: number | null;
+};
+
+export type PromoCode = {
+  id: string;
+  code: string;
+  discount_percent: number;
+  max_uses: number | null;
+  used_count: number;
+  is_active: boolean;
+  created_at: string;
 };
 
 export type PaymentRequest = {
