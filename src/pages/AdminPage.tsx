@@ -5,14 +5,14 @@ import {
   Calendar, Clock, X, Edit3, RefreshCw, CreditCard, ExternalLink, Key, Zap, Star,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { supabase, type Profile, type NewsItem, type MediaApplication, type PaymentRequest, type PromoCode } from '@/lib/supabase';
+import { supabase, type Profile, type NewsItem, type MediaApplication, type PaymentRequest, type PromoCode, type PlanPrice } from '@/lib/supabase';
 import type { Page } from '@/components/Navbar';
 
 type AdminPageProps = {
   onNavigate: (page: Page) => void;
 };
 
-type Tab = 'users' | 'news' | 'media' | 'payments' | 'promo';
+type Tab = 'users' | 'news' | 'media' | 'payments' | 'promo' | 'prices';
 
 export function AdminPage({ onNavigate }: AdminPageProps) {
   const { profile } = useAuth();
@@ -23,6 +23,8 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [promos, setPromos] = useState<PromoCode[]>([]);
   const [promoForm, setPromoForm] = useState({ code: '', discount: '10', maxUses: '' });
+  const [prices, setPrices] = useState<PlanPrice[]>([]);
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -44,6 +46,14 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     const mediaRes = await supabase.from('media_applications').select('*').order('created_at', { ascending: false });
     const promoRes = await supabase.from('promo_codes').select('*').order('created_at', { ascending: false });
     if (promoRes.data) setPromos(promoRes.data as PromoCode[]);
+    const pricesRes = await supabase.from('plan_prices').select('*').order('id', { ascending: true });
+    if (pricesRes.data) {
+      const list = pricesRes.data as PlanPrice[];
+      setPrices(list);
+      const m: Record<string, string> = {};
+      for (const p of list) m[p.id] = String(p.price);
+      setPriceEdits(m);
+    }
 
     if (usersRes.data) {
       const profiles = usersRes.data as Profile[];
@@ -191,6 +201,31 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     setActionLoading(null);
   };
 
+  const savePrices = async () => {
+    setActionLoading('prices');
+    for (const p of prices) {
+      const raw = priceEdits[p.id];
+      const n = parseInt(String(raw).replace(/\D/g, ''), 10);
+      if (!Number.isFinite(n) || n < 0) continue;
+      if (n === p.price) continue;
+      const { error } = await supabase.from('plan_prices').update({ price: n }).eq('id', p.id);
+      if (error) {
+        alert(`Narx saqlanmadi (${p.id}): ` + error.message);
+        setActionLoading(null);
+        return;
+      }
+    }
+    const fresh = await supabase.from('plan_prices').select('*').order('id', { ascending: true });
+    if (fresh.data) {
+      const list = fresh.data as PlanPrice[];
+      setPrices(list);
+      const m: Record<string, string> = {};
+      for (const p of list) m[p.id] = String(p.price);
+      setPriceEdits(m);
+    }
+    setActionLoading(null);
+  };
+
   const openSubModal = (userId: string) => {
     setSelectedUserId(userId);
     setShowSubModal(true);
@@ -242,22 +277,31 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     if (status === 'approved') {
       const req = paymentRequests.find(p => p.id === id);
       if (req) {
-        let expiresAt: string | null = null;
-        if (req.channel_url === '30day') {
-          expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        } else if (req.channel_url === '90day') {
-          expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
-        }
+        if (req.channel_url === 'hwid_reset') {
+          const { data: _upd, error: hwidErr } = await supabase.from('profiles').update({ hwid: null }).eq('id', req.user_id).select('id');
+          if (hwidErr || !_upd || _upd.length === 0) {
+            alert('Xatolik: HWID tozalanmadi. ' + (hwidErr?.message || 'Qator yangilanmadi.'));
+            setActionLoading(null);
+            return;
+          }
+        } else {
+          let expiresAt: string | null = null;
+          if (req.channel_url === '30day') {
+            expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          } else if (req.channel_url === '90day') {
+            expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString();
+          }
 
-        const { data: _upd, error: subError } = await supabase
-          .from('profiles')
-          .update({ subscription_type: req.channel_url as Profile['subscription_type'], subscription_expires_at: expiresAt })
-          .eq('id', req.user_id)
-          .select('id');
-        if (subError || !_upd || _upd.length === 0) {
-          alert('Xatolik: obuna berilmadi. ' + (subError?.message || 'Qator yangilanmadi (RLS tekshiring).'));
-          setActionLoading(null);
-          return;
+          const { data: _upd, error: subError } = await supabase
+            .from('profiles')
+            .update({ subscription_type: req.channel_url as Profile['subscription_type'], subscription_expires_at: expiresAt })
+            .eq('id', req.user_id)
+            .select('id');
+          if (subError || !_upd || _upd.length === 0) {
+            alert('Xatolik: obuna berilmadi. ' + (subError?.message || 'Qator yangilanmadi (RLS tekshiring).'));
+            setActionLoading(null);
+            return;
+          }
         }
 
         if ((req as MediaApplication).promo_code) {
@@ -305,6 +349,7 @@ export function AdminPage({ onNavigate }: AdminPageProps) {
     { id: 'media', label: 'Media so\'rovlar', icon: Megaphone, count: mediaApps.filter(a => a.status === 'pending').length },
     { id: 'payments', label: 'To\'lovlar', icon: CreditCard, count: paymentRequests.filter(p => p.status === 'pending').length },
     { id: 'promo', label: 'Promokodlar', icon: Star, count: promos.filter(p => p.is_active).length },
+    { id: 'prices', label: 'Narxlar', icon: CreditCard, count: prices.length },
   ];
 
   return (
@@ -673,6 +718,11 @@ Yangilik qo'shish
                             ) : null}
                           </div>
                         )}
+                        {req.channel_url === 'hwid_reset' && (
+                          <p className="text-xs text-amber-300 mt-1 flex items-center gap-1">
+                            <Cpu className="w-3 h-3" /> HWID Yangilash so'rovi
+                          </p>
+                        )}
                         {req.description && req.description.startsWith('data:') && (
                           <div className="mt-2">
                             <p className="text-xs text-gray-500 mb-1">Skrinshot:</p>
@@ -712,6 +762,41 @@ Yangilik qo'shish
                 {paymentRequests.length === 0 && (
                   <div className="glass-card p-8 text-center text-gray-400">To'lov so'rovlar yo'q.</div>
                 )}
+              </div>
+            )}
+
+            {/* PRICES TAB */}
+            {tab === 'prices' && (
+              <div className="space-y-3">
+                <div className="glass-card p-5">
+                  <h3 className="font-semibold text-white mb-1">Obuna va HWID narxlari</h3>
+                  <p className="text-xs text-gray-400 mb-4">Narxni tahrirlab Saqlash bosing — saytdagi Obunalar bo'limi darhol yangilanadi.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {prices.map((pr) => (
+                      <div key={pr.id} className="glass-card p-4">
+                        <p className="text-xs text-gray-400 mb-2 font-mono">{pr.id}</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={priceEdits[pr.id] ?? String(pr.price)}
+                            onChange={(e) => setPriceEdits({ ...priceEdits, [pr.id]: e.target.value })}
+                            className="glass-input flex-1 px-3 py-2.5 text-sm"
+                          />
+                          <span className="px-3 py-2 rounded-xl bg-white/5 text-xs text-gray-400 self-center">so'm</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={savePrices}
+                    disabled={actionLoading === 'prices'}
+                    className="btn-primary mt-4 w-full sm:w-auto px-6 flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {actionLoading === 'prices' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                    Saqlash
+                  </button>
+                </div>
               </div>
             )}
 

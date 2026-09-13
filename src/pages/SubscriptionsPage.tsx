@@ -1,16 +1,16 @@
-import { Check, Crown, Zap, Star, Shield, Copy, Upload, Loader2, X, CheckCircle } from 'lucide-react';
+import { Check, Crown, Zap, Star, Shield, Copy, Upload, Loader2, X, CheckCircle, Cpu, RefreshCw } from 'lucide-react';
 import { GlassCard } from '@/components/GlassCard';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import type { Page } from '@/components/Navbar';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 type SubscriptionsPageProps = {
   onNavigate: (page: Page) => void;
 };
 
 type Plan = {
-  id: '30day' | '90day' | 'lifetime';
+  id: '30day' | '90day' | 'lifetime' | 'hwid_reset';
   name: string;
   price: string;
   duration: string;
@@ -23,7 +23,7 @@ type Plan = {
 const CARD_NUMBER = '4466 1369 5196 8727';
 const CARD_HOLDER = 'Berdibaev A';
 
-const plans: Plan[] = [
+const defaultPlans: Plan[] = [
   {
     id: '30day',
     name: '30 kunlik obuna',
@@ -73,10 +73,26 @@ const plans: Plan[] = [
       'Maxsus badge saytda',
     ],
   },
+  {
+    id: 'hwid_reset',
+    name: 'HWID Yangilash',
+    price: '10.000',
+    duration: '1 marta',
+    icon: Cpu,
+    gradient: 'from-emerald-500 to-teal-600',
+    features: [
+      'Qurilma blokini olib tashlash',
+      'Yangi kompyuterda 1 marta faollashtirish',
+      'HWID qayta bog\'lanadi',
+      'Obunangiz saqlanib qoladi',
+      'Admin tasdiqlagach darhol ishlaydi',
+    ],
+  },
 ];
 
 export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
   const { user, profile } = useAuth();
+  const [plans, setPlans] = useState<Plan[]>(defaultPlans);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -87,6 +103,20 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
   const [promoDiscount, setPromoDiscount] = useState<number | null>(null);
   const [promoMsg, setPromoMsg] = useState<string | null>(null);
   const [promoChecking, setPromoChecking] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from('plan_prices').select('id, price');
+      if (data && Array.isArray(data) && data.length > 0) {
+        const map = new Map<string, number>();
+        for (const r of data as { id: string; price: number }[]) map.set(r.id, r.price);
+        setPlans(defaultPlans.map(p => {
+          const pr = map.get(p.id);
+          return pr != null ? { ...p, price: pr.toLocaleString('uz-UZ') } : p;
+        }));
+      }
+    })();
+  }, []);
 
   const handlePurchase = (plan: Plan) => {
     if (!user || !profile) {
@@ -206,7 +236,7 @@ export function SubscriptionsPage({ onNavigate }: SubscriptionsPageProps) {
         </div>
 
         {/* Pricing cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {plans.map((plan, i) => (
             <div key={plan.id} className="relative">
               {plan.popular && (

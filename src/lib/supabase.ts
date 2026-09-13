@@ -59,6 +59,12 @@ export type PromoCode = {
   created_at: string;
 };
 
+export type PlanPrice = {
+  id: string;
+  price: number;
+  updated_at: string;
+};
+
 export type PaymentRequest = {
   id: string;
   user_id: string;
